@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive CJK Font Completion</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <h1>CJK 手寫字體互動修正系統</h1>
+            <div class="status-bar">
+                <span class="user-tag">User: Oliver</span>
+                <span class="status-tag">Status: Alpha Integration</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <section class="glyph-section">
+            <div class="section-header">
+                <h2>字形網格 (Glyph Grid)</h2>
+                <div class="filter">
+                    <span>排序依據：</span>
+                    <button class="filter-btn active">信心評分 (Confidence)</button>
+                </div>
+            </div>
+            
+            <div id="glyph-grid" class="grid-container">
+                <div class="glyph-card active" data-status="bad">
+                    <div class="char-display">忙</div>
+                    <div class="card-meta">
+                        <span class="badge red">Low Confidence</span>
+                        <p class="score">Score: 38</p>
+                        <span class="edit-hint">點擊修正 &rarr;</span>
+                    </div>
+                </div>
+
+                <div class="glyph-card" data-status="mild">
+                    <div class="char-display">個</div>
+                    <div class="card-meta">
+                        <span class="badge yellow">Mild Confidence</span>
+                        <p class="score">Score: 55</p>
+                        <span class="edit-hint">點擊修正 &rarr;</span>
+                    </div>
+                </div>
+
+                <div class="glyph-card" data-status="good">
+                    <div class="char-display">永</div>
+                    <div class="card-meta">
+                        <span class="badge green">High Confidence</span>
+                        <p class="score">Score: 92</p>
+                        <span class="edit-hint">點擊修正 &rarr;</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <aside class="control-panel">
+            <h2>修正面板 (Adjustment)</h2>
+            
+            <div class="preview-box">
+                <canvas id="main-canvas" width="200" height="200"></canvas>
+                <p class="caption">當前選取預覽</p>
+            </div>
+
+            <div class="sliders">
+                <div class="slider-group">
+                    <div class="slider-label">
+                        <label for="weight-slider">粗細 (Weight)</label>
+                        <span class="val-display">50</span>
+                    </div>
+                    <input type="range" id="weight-slider" min="1" max="100" value="50">
+                </div>
+                <div class="slider-group">
+                    <div class="slider-label">
+                        <label for="slant-slider">斜度 (Slant)</label>
+                        <span class="val-display">0</span>
+                    </div>
+                    <input type="range" id="slant-slider" min="-45" max="45" value="0">
+                </div>
+                <div class="slider-group">
+                    <div class="slider-label">
+                        <label for="round-slider">圓角 (Roundness)</label>
+                        <span class="val-display">20</span>
+                    </div>
+                    <input type="range" id="round-slider" min="0" max="100" value="20">
+                </div>
+            </div>
+
+            <div class="draw-section">
+                <label for="draw-pad">手寫板 (Draw Box)</label>
+                <canvas id="draw-pad" width="260" height="200"></canvas>
+                <p class="caption-small">請在此處重寫字形結構</p>
+            </div>
+
+            <div class="actions">
+                <button id="btn-refine" class="primary-btn">✨ 重新生成 (Online Fine-tune)</button>
+                <button id="btn-submit" class="secondary-btn">確認提交</button>
+            </div>
+        </aside>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>
