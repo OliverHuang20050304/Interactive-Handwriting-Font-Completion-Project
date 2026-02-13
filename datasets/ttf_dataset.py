@@ -1,98 +1,97 @@
-"""
-MX-Font
-Copyright (c) 2021-present NAVER Corp.
-MIT license
-"""
-
+import os
 from pathlib import Path
 from itertools import chain
 import random
+from PIL import Image
 
 import torch
 from torch.utils.data import Dataset
-
-from .ttf_utils import read_font, render
-
+from torchvision import transforms
 
 class TTFTrainDataset(Dataset):
     def __init__(self, data_dir, primals, decomposition, transform=None,
-                 n_in_s=3, n_in_c=3, source_font=None):
+                 n_in_s=3, n_in_c=3, **kwargs):
+        
+        # 取得目前這個 ttf_dataset.py 檔案所在的絕對路徑
+        # 然後往上推兩層回到 mxfont 根目錄
+        current_file_path = Path(__file__).resolve()
+        project_root = current_file_path.parent.parent 
+        
+        # 根據你的截圖，data 資料夾在 mxfont 內
+        # 所以路徑應該是 project_root / data / target / train
+        base_dir = project_root / "png_data"
+        
+        self.target_dir = base_dir / "target" / "train"
+        self.source_dir = base_dir / "source" / "train"
+        
+        # 輸出目前嘗試讀取的路徑，方便除錯
+        print(f"🔍 正在嘗試讀取資料路徑: {self.target_dir}")
 
-        self.data_dir = data_dir
+        if not self.target_dir.exists():
+            # 如果還是找不到，嘗試看看是不是在 data/ttfs 下 (對應你截圖中的 ttfs 資料夾)
+            self.target_dir = base_dir / "ttfs" / "target" / "train"
+            self.source_dir = base_dir / "ttfs" / "source" / "train"
+            
+        if not self.target_dir.exists():
+            raise FileNotFoundError(
+                f"❌ 依然找不到目錄。\n"
+                f"目前偵測到的根目錄是: {project_root}\n"
+                f"請確認你的 PNG 檔案是否放在: {project_root}/data/target/train/"
+            )
+
         self.primals = primals
         self.decomposition = decomposition
 
-        self.key_font_dict, self.key_char_dict = load_data_list(data_dir, char_filter=list(self.decomposition))
-        self.char_key_dict = {}
-        for key, charlist in self.key_char_dict.items():
-            for char in charlist:
-                self.char_key_dict.setdefault(char, []).append(key)
-
-        self.key_char_dict, self.char_key_dict = self.filter_chars()
-        self.data_list = [(key, char) for key, chars in self.key_char_dict.items() for char in chars]
-
-        self.keys = sorted(self.key_font_dict)
-        self.chars = sorted(set.union(*map(set, self.key_char_dict.values())))
+        # 獲取所有圖片檔名
+        self.filenames = sorted([f for f in os.listdir(self.target_dir) if f.endswith('.png')])
+        
+        if len(self.filenames) == 0:
+            raise RuntimeError(f"❌ 在 {self.target_dir} 中找不到 PNG 檔案！")
+            
+        self.file_to_char = {f: chr(int(f.split('.')[0])) for f in self.filenames}
+        self.chars = sorted([self.file_to_char[f] for f in self.filenames])
 
         self.transform = transform
-
         self.n_in_s = n_in_s
         self.n_in_c = n_in_c
         self.n_chars = len(self.chars)
-        self.n_fonts = len(self.keys)
-
-    def filter_chars(self):
-        char_key_dict = {}
-        for char, keys in self.char_key_dict.items():
-            num_keys = len(keys)
-            if num_keys > 1:
-                char_key_dict[char] = keys
-            else:
-                pass
-
-        filtered_chars = list(char_key_dict)
-        key_char_dict = {}
-        for key, chars in self.key_char_dict.items():
-            key_char_dict[key] = list(set(chars).intersection(filtered_chars))
-
-        return key_char_dict, char_key_dict
-
+        self.n_fonts = 1
     def __getitem__(self, index):
-        key, char = self.data_list[index]
-        font = self.key_font_dict[key]
-        fidx = self.keys.index(key)
-        cidx = self.chars.index(char)
-
-        trg_img = self.transform(render(font, char))
+        trg_filename = self.filenames[index]
+        char = self.file_to_char[trg_filename]
+        
+        # 1. 載入目標圖 (辰宇落雁體) 與 來源圖 (蘋方體)
+        trg_img = self.transform(Image.open(self.target_dir / trg_filename).convert('L'))
+        src_img = self.transform(Image.open(self.source_dir / trg_filename).convert('L'))
+        
+        # 2. 獲取組件標籤
         trg_dec = [self.primals.index(x) for x in self.decomposition[char]]
 
-        style_chars = sample([c for c in self.key_char_dict[key] if c != char], self.n_in_s)
-        style_imgs = torch.stack([self.transform(render(font, c)) for c in style_chars])
-        style_decs = [[self.primals.index(x) for x in self.decomposition[c]] for c in style_chars]
+        # 3. 隨機抽取同風格的其他字 (Style Samples)
+        style_filenames = random.sample([f for f in self.filenames if f != trg_filename], self.n_in_s)
+        style_imgs = torch.stack([self.transform(Image.open(self.target_dir / f).convert('L')) for f in style_filenames])
+        style_decs = [[self.primals.index(x) for x in self.decomposition[self.file_to_char[f]]] for f in style_filenames]
 
-        char_keys = sample([k for k in self.char_key_dict[char] if k != key], self.n_in_c)
-
-        char_imgs = torch.stack([self.transform(render(self.key_font_dict[k], char)) for k in char_keys])
+        # 4. 隨機抽取同內容的其他風格 (由於你只有一種 Target，這裡我們直接用 Source 代替)
+        char_imgs = torch.stack([src_img] * self.n_in_c)
         char_decs = [trg_dec] * self.n_in_c
-        char_fids = [self.keys.index(_k) for _k in char_keys]
+        char_fids = [0] * self.n_in_c # 只有一種字體
 
-        ret = {
+        return {
             "trg_imgs": trg_img,
             "trg_decs": trg_dec,
-            "trg_fids": torch.LongTensor([fidx]),
-            "trg_cids": torch.LongTensor([cidx]),
+            "trg_fids": torch.LongTensor([0]),
+            "trg_cids": torch.LongTensor([self.chars.index(char)]),
             "style_imgs": style_imgs,
             "style_decs": style_decs,
-            "style_fids": torch.LongTensor([fidx]*self.n_in_s),
+            "style_fids": torch.LongTensor([0] * self.n_in_s),
             "char_imgs": char_imgs,
             "char_decs": char_decs,
             "char_fids": torch.LongTensor(char_fids)
         }
 
-        return ret
-
     def __len__(self):
-        return len(self.data_list)
+        return len(self.filenames)
 
     @staticmethod
     def collate_fn(batch):
@@ -102,7 +101,7 @@ class TTFTrainDataset(Dataset):
                 saved = _ret.get(key, [])
                 _ret.update({key: saved + [value]})
 
-        ret = {
+        return {
             "trg_imgs": torch.stack(_ret["trg_imgs"]),
             "trg_decs": _ret["trg_decs"],
             "trg_fids": torch.cat(_ret["trg_fids"]),
@@ -115,67 +114,59 @@ class TTFTrainDataset(Dataset):
             "char_fids": torch.stack(_ret["char_fids"])
         }
 
-        return ret
-
-
+# 驗證集 (Validation) 也請依照相同邏輯簡化
 class TTFValDataset(Dataset):
-    def __init__(self, data_dir, source_font, char_filter, n_ref=4, n_gen=20, transform=None):
+    def __init__(self, data_dir, source_font, char_filter, n_ref=4, n_gen=20, transform=None, **kwargs):
+        # 取得專案根目錄
+        current_file_path = Path(__file__).resolve()
+        project_root = current_file_path.parent.parent 
+        base_dir = project_root / "png_data"
+        
+        # 指向你的測試/驗證資料夾
+        self.target_dir = base_dir / "target" / "test"
+        self.source_dir = base_dir / "source" / "test"
+        
+        if not self.target_dir.exists():
+            # 容錯：檢查 data/ttfs 下
+            self.target_dir = base_dir / "ttfs" / "target" / "test"
+            self.source_dir = base_dir / "ttfs" / "source" / "test"
 
-        self.data_dir = data_dir
-        self.source_font = read_font(source_font) if source_font is not None else None
-        self.n_ref = n_ref
-        self.n_gen = n_gen
-
-        self.key_font_dict, self.key_char_dict = load_data_list(data_dir, char_filter=char_filter)
-        if self.source_font is None:
-            self.char_key_dict = {}
-            for key, charlist in self.key_char_dict.items():
-                for char in charlist:
-                    self.char_key_dict.setdefault(char, []).append(key)
-
-            self.key_char_dict, self.char_key_dict = self.filter_chars()
-        self.ref_chars, self.gen_chars = self.sample_ref_gen_chars(self.key_char_dict)
-
-        self.gen_char_dict = {k: self.gen_chars for k in self.key_font_dict}
-        self.data_list = [(key, char) for key, chars in self.gen_char_dict.items() for char in chars]
         self.transform = transform
+        
+        # 獲取測試集的圖片檔名
+        self.filenames = sorted([f for f in os.listdir(self.target_dir) if f.endswith('.png')])
+        self.file_to_char = {f: chr(int(f.split('.')[0])) for f in self.filenames}
+        
+        # 為了讓模型驗證，我們需要定義參考風格字與待生成字
+        # 這裡簡單處理：全部測試字都作為生成目標
+        self.ref_filenames = random.sample(self.filenames, min(n_ref, len(self.filenames)))
+        self.gen_filenames = self.filenames
 
-    def sample_ref_gen_chars(self, key_char_dict):
-        common_chars = sorted(set.intersection(*map(set, key_char_dict.values())))
-        sampled_chars = sample(common_chars, self.n_ref+self.n_gen)
-        ref_chars = sampled_chars[:self.n_ref]
-        gen_chars = sampled_chars[self.n_ref:]
-
-        return ref_chars, gen_chars
+        self.ref_chars = [self.file_to_char[f] for f in self.ref_filenames]
+        self.gen_chars = [self.file_to_char[f] for f in self.gen_filenames]
 
     def __getitem__(self, index):
-        key, char = self.data_list[index]
-        font = self.key_font_dict[key]
+        trg_filename = self.gen_filenames[index]
+        char = self.file_to_char[trg_filename]
 
-        ref_imgs = torch.stack([self.transform(render(font, c))
-                                for c in self.ref_chars])
+        # 風格參考圖 (從測試集中選取)
+        ref_imgs = torch.stack([self.transform(Image.open(self.target_dir / f).convert('L'))
+                                for f in self.ref_filenames])
 
-        if self.source_font is not None:
-            source_font = self.source_font
-        else:
-            source_key = random.choice(self.char_key_dict[char])
-            source_font = self.key_font_dict[source_key]
+        # 來源圖與目標圖
+        source_img = self.transform(Image.open(self.source_dir / trg_filename).convert('L'))
+        trg_img = self.transform(Image.open(self.target_dir / trg_filename).convert('L'))
 
-        source_img = self.transform(render(source_font, char))
-        trg_img = self.transform(render(font, char))
-
-        ret = {
+        return {
             "style_imgs": ref_imgs,
             "source_imgs": source_img,
-            "fonts": key,
+            "fonts": "target_font",
             "chars": char,
             "trg_imgs": trg_img
         }
 
-        return ret
-
     def __len__(self):
-        return len(self.data_list)
+        return len(self.gen_filenames)
 
     @staticmethod
     def collate_fn(batch):
@@ -185,41 +176,10 @@ class TTFValDataset(Dataset):
                 saved = _ret.get(key, [])
                 _ret.update({key: saved + [value]})
 
-        ret = {
+        return {
             "style_imgs": torch.stack(_ret["style_imgs"]),
             "source_imgs": torch.stack(_ret["source_imgs"]),
             "fonts": _ret["fonts"],
             "chars": _ret["chars"],
             "trg_imgs": torch.stack(_ret["trg_imgs"])
         }
-
-        return ret
-
-
-def sample(population, k):
-    if len(population) < k:
-        sampler = random.choices
-    else:
-        sampler = random.sample
-    sampled = sampler(population, k=k)
-    return sampled
-
-
-def load_data_list(data_dir, char_filter=None):
-    font_paths = sorted(Path(data_dir).glob("*.ttf"))
-
-    key_font_dict = {}
-    key_char_dict = {}
-
-    for font_path in font_paths:
-        font = read_font(font_path)
-        key_font_dict[font_path.stem] = font
-
-        with open(str(font_path).replace(".ttf", ".txt")) as f:
-            chars = f.read()
-
-        if char_filter is not None:
-            chars = set(chars).intersection(char_filter)
-        key_char_dict[font_path.stem] = list(chars)
-
-    return key_font_dict, key_char_dict

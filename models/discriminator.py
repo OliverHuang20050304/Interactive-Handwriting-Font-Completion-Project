@@ -76,7 +76,9 @@ class CustomDiscriminator(nn.Module):
         if out_feats == 'all':
             ret += feats
 
-        ret = tuple(map(lambda i: i.cuda(), ret))
+        # 自動偵測裝置
+        device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+        ret = tuple(map(lambda i: i.to(device), ret))
         return ret
 
 

@@ -1,15 +1,52 @@
-use_ddp: False   # whether to use DataDistributedParallel, for multi-gpus.
-port:   # the port for the DataDistributedParallel training.
+# 基礎設定
+use_ddp: False   # M2 Mac 不支援 NCCL，必須設為 False
+port: 12345      # 隨便填一個，因為 use_ddp 是 False，這不會被用到
 
-resume:
-work_dir: ./result   # the directory to save checkpoints, validation images, and the log.
+# 訓練紀錄與權重
+resume:          # 如果你有官方預訓練權重，請填入路徑，例如：./generator.pth
+work_dir: ./result   # 訓練結果（圖片、Log、模型）會存放在這裡
 
-decomposition: data/chn_decomposition.json   # path to the "decomposition rule" file.
-primals: data/chn_primals.json   # path to the "primals" file.
+# 【關鍵修改】指向你產出的繁體資料
+# 這裡的路徑是相對於 mxfont/ 的位置
+decomposition: data/decomposition_fixed.json   # 指向你修復後的繁體組件表
+primals: data/chn_primals.json   # 使用 mxfont 內建的 chn_primals.json 亦可，請確認檔案存在
 
-dset:   # leave blank
-  train:   # leave blank
-    data_dir: data/ttfs/train   # path to .ttf files for the training
-  val:   # leave blank
-    data_dir: data/ttfs/val   # path to .ttf files for the validation
-    source_font: data/ttfs/val/MaShanZheng-Regular.ttf   # path to the .ttf file used as the source font during the validation
+dset:
+  train:
+    # 修改為指向你存放 source/target 資料夾的根目錄
+    data_dir: ../data   
+    n_in_s: 3   # 風格參考樣本數
+    n_in_c: 3   # 內容參考樣本數
+  val:
+    # 驗證集路徑也同步指向你的 data
+    data_dir: ../data
+    # 這裡原先需要 TTF，但因為我們改寫了 Dataset 直接讀 PNG，
+    # 只要確保你的 data/source/test 有蘋方體的圖片即可對答案
+    source_font: /System/Library/Fonts/PingFang.ttc
+
+# 其他優化設定 (建議在 train.yaml 下方確認)
+batch_size: 2    # M2 MacBook Air 建議設為 4 以免記憶體溢位
+n_workers: 0      # M2 Mac 上設為 0 最穩定，避免多線程導致的 MPS 衝突
+
+# 顯示與儲存頻率 (單位：Step)
+print_freq: 10     # 每 10 步就在終端機印出一次 Loss (讓你確認它沒卡住)
+val_freq: 500      # 每 500 步進行一次驗證並存圖
+save_freq: 1000    # 每 1000 步存一次模型權重
+tb_freq: 10        # 每 10 步更新一次 TensorBoard 數據
+
+# 請確認這三個數值都改成 0.00001
+g_lr: 0.00001
+d_lr: 0.00001
+ac_lr: 0.00001
+
+# ==========================================
+# 【新增】強制關閉導致炸掉的獨立性損失 (原本預設是 1.0)
+indp_exp_w: 0.0
+indp_fact_w: 0.0
+
+# 確保其他損失權重正常 (寫出來比較保險)
+ac_w: 1.0
+ac_gen_w: 1.0
+ac_cross_w: 1.0
+fm_w: 1.0
+# ==========================================

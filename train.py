@@ -1,7 +1,6 @@
 """
-MX-Font
-Copyright (c) 2021-present NAVER Corp.
-MIT license
+MX-Font for M2 Mac (MPS)
+Modified for Apple Silicon Compatibility
 """
 
 import json
@@ -10,9 +9,9 @@ from pathlib import Path
 import argparse
 
 import torch
-
 import torch.optim as optim
-import torch.backends.cudnn as cudnn
+# 移除 cudnn，MPS 不需要
+# import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.utils.data.distributed
@@ -38,8 +37,9 @@ def setup_args_and_config():
                  colorize_modified_item=True)
     cfg.argv_update(left_argv)
 
-    if cfg.use_ddp:
-        cfg.n_workers = 0
+    # M2 Mac 建議關閉 DDP 與多線程 worker 以節省統一記憶體
+    cfg.use_ddp = False 
+    cfg.n_workers = 0 
 
     cfg.work_dir = Path(cfg.work_dir)
     (cfg.work_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
@@ -48,11 +48,12 @@ def setup_args_and_config():
 
 
 def setup_transforms(cfg):
+    # 修正：M2 Mac 的 Pillow 版本建議移除 fillcolor，改用 fill
     if cfg.dset_aug.random_affine:
         aug_transform = [
             transforms.ToPILImage(),
             transforms.RandomAffine(
-                degrees=10, translate=(0.03, 0.03), scale=(0.9, 1.1), shear=10, fillcolor=255
+                degrees=10, translate=(0.03, 0.03), scale=(0.9, 1.1), shear=10, fill=255
             )
         ]
     else:
@@ -69,30 +70,15 @@ def setup_transforms(cfg):
     return trn_transform, val_transform
 
 
-def cleanup():
-    dist.destroy_process_group()
-
-
-def is_main_worker(gpu):
-    return (gpu <= 0)
-
-
-def train_ddp(gpu, args, cfg, world_size):
-    dist.init_process_group(
-        backend="nccl",
-        init_method="tcp://127.0.0.1:" + str(cfg.port),
-        world_size=world_size,
-        rank=gpu,
-    )
-    cfg.batch_size = cfg.batch_size // world_size
-    train(args, cfg, ddp_gpu=gpu)
-    cleanup()
-
-
-def train(args, cfg, ddp_gpu=-1):
-    cfg.gpu = ddp_gpu
-    torch.cuda.set_device(ddp_gpu)
-    cudnn.benchmark = True
+def train(args, cfg):
+    # 自動偵測 M2 GPU (MPS)
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+    
+    cfg.device = device
+    print(f"✅ 正在使用裝置: {device}")
 
     logger_path = cfg.work_dir / "log.log"
     logger = Logger.get(file_path=logger_path, level="info", colorize=True)
@@ -103,16 +89,16 @@ def train(args, cfg, ddp_gpu=-1):
     cfg.tb_freq = -1
 
     args_str = dump_args(args)
-    if is_main_worker(ddp_gpu):
-        logger.info("Run Argv:\n> {}".format(" ".join(sys.argv)))
-        logger.info("Args:\n{}".format(args_str))
-        logger.info("Configs:\n{}".format(cfg.dumps()))
+    logger.info("Run Argv:\n> {}".format(" ".join(sys.argv)))
+    logger.info("Args:\n{}".format(args_str))
+    logger.info("Configs:\n{}".format(cfg.dumps()))
 
     logger.info("Get dataset ...")
 
     trn_transform, val_transform = setup_transforms(cfg)
 
     primals = json.load(open(cfg.primals))
+    # 確保讀取你修復後的繁體字 JSON
     decomposition = json.load(open(cfg.decomposition))
     n_comps = len(primals)
 
@@ -120,7 +106,7 @@ def train(args, cfg, ddp_gpu=-1):
                                           primals,
                                           decomposition,
                                           trn_transform,
-                                          use_ddp=cfg.use_ddp,
+                                          use_ddp=False,
                                           batch_size=cfg.batch_size,
                                           num_workers=cfg.n_workers,
                                           shuffle=True)
@@ -132,19 +118,22 @@ def train(args, cfg, ddp_gpu=-1):
                                             shuffle=False)
 
     logger.info("Build model ...")
-    # generator
+    
+    # Generator
     g_kwargs = cfg.get("g_args", {})
     gen = Generator(1, cfg.C, 1, **g_kwargs)
-    gen.cuda()
+    gen.to(device) # 修改：.cuda() -> .to(device)
     gen.apply(weights_init(cfg.init))
 
+    # Discriminator
     d_kwargs = cfg.get("d_args", {})
     disc = disc_builder(cfg.C, trn_dset.n_fonts, trn_dset.n_chars, **d_kwargs)
-    disc.cuda()
+    disc.to(device) # 修改：.cuda() -> .to(device)
     disc.apply(weights_init(cfg.init))
 
+    # Aux Classifier
     aux_clf = aux_clf_builder(gen.feat_shape["last"], trn_dset.n_fonts, n_comps, **cfg.ac_args)
-    aux_clf.cuda()
+    aux_clf.to(device) # 修改：.cuda() -> .to(device)
     aux_clf.apply(weights_init(cfg.init))
 
     g_optim = optim.Adam(gen.parameters(), lr=cfg.g_lr, betas=cfg.adam_betas)
@@ -153,6 +142,7 @@ def train(args, cfg, ddp_gpu=-1):
 
     st_step = 0
     if cfg.resume:
+        # 注意：load_checkpoint 內部也需要確保 map_location='cpu' 或 'mps'
         st_step, loss = load_checkpoint(cfg.resume, gen, disc, aux_clf, g_optim, d_optim, ac_optim, cfg.force_resume)
         logger.info("Resumed checkpoint from {} (Step {}, Loss {:7.3f})".format(cfg.resume, st_step, loss))
 
@@ -173,12 +163,8 @@ def main():
     np.random.seed(cfg["seed"])
     torch.manual_seed(cfg["seed"])
 
-    if cfg.use_ddp:
-        ngpus_per_node = torch.cuda.device_count()
-        world_size = ngpus_per_node
-        mp.spawn(train_ddp, nprocs=ngpus_per_node, args=(args, cfg, world_size))
-    else:
-        train(args, cfg)
+    # 直接調用訓練，略過 DDP 邏輯
+    train(args, cfg)
 
 
 if __name__ == "__main__":

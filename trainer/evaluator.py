@@ -35,12 +35,16 @@ class Evaluator:
 
     @torch_eval
     def infer_fact_loader(self, gen, loader, save_dir=None):
+        # 【關鍵修改】自動獲取模型所在的裝置 (M2 Mac 會抓到 'mps')
+        device = next(gen.parameters()).device
+
         outs = []
         trgs = []
 
         for batch in loader:
-            style_imgs = batch["style_imgs"].cuda()
-            char_imgs = batch["source_imgs"].unsqueeze(1).cuda()
+            # 【關鍵修改】將 .cuda() 改為 .to(device)
+            style_imgs = batch["style_imgs"].to(device)
+            char_imgs = batch["source_imgs"].unsqueeze(1).to(device)
 
             out = gen.gen_from_style_char(style_imgs, char_imgs)
             outs.append(out.detach().cpu())

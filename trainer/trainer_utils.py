@@ -1,7 +1,6 @@
 """
-MX-Font
-Copyright (c) 2021-present NAVER Corp.
-MIT license
+MX-Font for M2 Mac (MPS)
+Modified for Apple Silicon Compatibility
 """
 
 import torch
@@ -10,6 +9,8 @@ import torch.nn as nn
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+# 自動偵測裝置：優先使用 MPS，否則使用 CPU
+device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
 
 def cyclize(loader):
     """ Cyclize loader """
@@ -43,7 +44,8 @@ def overwrite_weight(model, pre_weight):
 
 
 def load_checkpoint(path, gen, disc, aux_clf, g_optim, d_optim, ac_optim, force_overwrite=False):
-    ckpt = torch.load(path)
+    # 修改：load 時加入 map_location，確保在 Mac 上能讀取 CUDA 產出的權重
+    ckpt = torch.load(path, map_location=device)
 
     if force_overwrite:
         overwrite_weight(gen, ckpt['generator'])
@@ -76,7 +78,8 @@ def load_checkpoint(path, gen, disc, aux_clf, g_optim, d_optim, ac_optim, force_
 def binarize_labels(label_ids, n_labels):
     binary_labels = []
     for _lids in label_ids:
-        _blabel = torch.eye(n_labels)[_lids].sum(0).bool()
+        # 修改：建立 eye tensor 時直接指定裝置
+        _blabel = torch.eye(n_labels, device=device)[_lids].sum(0).bool()
         binary_labels.append(_blabel)
     binary_labels = torch.stack(binary_labels)
 
@@ -104,7 +107,8 @@ def expert_assign(prob_org):
     cat_selected_rs = np.concatenate(selected_cs) if n_comp < n_exp else np.concatenate(selected_rs)
     cat_selected_cs = np.concatenate(selected_rs) if n_comp < n_exp else np.concatenate(selected_cs)
 
-    cat_selected_rs = torch.LongTensor(cat_selected_rs).cuda()
-    cat_selected_cs = torch.LongTensor(cat_selected_cs).cuda()
+    # 修改：將 .cuda() 改為 .to(device)
+    cat_selected_rs = torch.LongTensor(cat_selected_rs).to(device)
+    cat_selected_cs = torch.LongTensor(cat_selected_cs).to(device)
 
     return cat_selected_rs, cat_selected_cs
