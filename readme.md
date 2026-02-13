@@ -32,7 +32,7 @@ python inference.py --gen result/checkpoints/last.pth --ref png_data/target/trai
 python gen_all.py
 ```
 
-> **⚠️ 注意**：模型權重檔 `last.pth` 因檔案過大未上傳 GitHub，請向 Oliver 索取並放入 `result/checkpoints/` 資料夾。
+
 
 ## 👥 團隊與分工
 - **Flora**：審美標準、資料集收集、怪字判定與評估。
