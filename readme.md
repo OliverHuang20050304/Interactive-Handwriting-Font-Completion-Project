@@ -1,5 +1,5 @@
-# Interactive CJK Handwriting Font Completion
-## 互動式 CJK 手寫字體補全計畫
+# ✍️ Interactive Handwriting Font Completion
+## From a Few Handwritten Samples to a Complete Personal Font
 
 本專案結合深度學習 (MX-Font) 與互動式介面，協助使用者透過少量手寫樣本，快速生成高品質且具備個人風格的中韓字體。
 
